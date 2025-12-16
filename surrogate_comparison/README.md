@@ -6,6 +6,7 @@ Part I, task 2: This project compares different surrogate gradient functions for
 - `surrogate.py`: Definitions of custom autograd functions (SuperSpike, PiecewiseLinear, Sigmoid).
 - `modules.py`: PyTorch `nn.Module` wrappers for the surrogate functions.
 - `main.py`: Main training loop (Multiprocessing supported).
+- `train.py`: SNN structure, download datasets.
 - `plot.py`: Visualizes the training results from CSV files.
 
 ## Dependencies

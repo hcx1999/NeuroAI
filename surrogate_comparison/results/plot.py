@@ -42,8 +42,6 @@ def plot_comparison():
     plt.legend(fontsize=10, loc='lower right')
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    # plt.ylim(0, 100) 
-    
     plt.tight_layout()
     plt.savefig('surrogate_comparison.png', dpi=300)
     print("Plot saved to 'surrogate_comparison.png'")

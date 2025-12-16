@@ -48,7 +48,7 @@ class CSNN(nn.Module):
         out_fr = out_fr / self.T
         return out_fr
 
-def train_worker(surrogate_name, alpha, device_id, epochs=100, batch_size=64, T=4, save_dir='./results'):
+def train_worker(surrogate_name, alpha, device_id, epochs=100, batch_size=64, T=4, save_dir='../results'):
     device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")
     print(f"[{surrogate_name}] Starting on {device}...")
 
@@ -65,8 +65,8 @@ def train_worker(surrogate_name, alpha, device_id, epochs=100, batch_size=64, T=
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-    train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform)
-    test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform)
+    train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=False, transform=transform)
+    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=False, transform=transform)
     
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=2)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=2)
@@ -136,8 +136,8 @@ def train_worker(surrogate_name, alpha, device_id, epochs=100, batch_size=64, T=
 
 if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
-    torchvision.datasets.CIFAR10(root='./data', train=True, download=True)
-    torchvision.datasets.CIFAR10(root='./data', train=False, download=True)
+    torchvision.datasets.CIFAR10(root='../data', train=True, download=True)
+    torchvision.datasets.CIFAR10(root='../data', train=False, download=True)
 
     experiments = [
         {'name': 'SuperSpike',       'alpha': 10.0, 'gpu_id': 0},
