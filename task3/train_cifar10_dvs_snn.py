@@ -239,29 +239,6 @@ def get_dataloaders(
             )
     print(f"类别数: 10 (CIFAR-10)")
 
-    # Print class distribution in train and test sets
-    print("\n类别分布 (Class Distribution):")
-    train_class_count = defaultdict(int)
-    test_class_count = defaultdict(int)
-
-    for idx in train_indices:
-        _, label = full_dataset[idx]
-        train_class_count[label] += 1
-
-    for idx in test_indices:
-        _, label = full_dataset[idx]
-        test_class_count[label] += 1
-
-    print(f"{'类别':<8} {'训练集':<12} {'测试集':<12} {'总计':<8}")
-    print("-" * 45)
-    for class_label in sorted(
-        set(train_class_count.keys()) | set(test_class_count.keys())
-    ):
-        train_count = train_class_count.get(class_label, 0)
-        test_count = test_class_count.get(class_label, 0)
-        total_count = train_count + test_count
-        print(f"{class_label:<8} {train_count:<12} {test_count:<12} {total_count:<8}")
-
     print(f"\n批次大小: {batch_size}")
     print(f"DataLoader workers: {num_workers}")
     print("=" * 70 + "\n")
@@ -272,6 +249,8 @@ def get_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
+        persistent_workers=True if num_workers > 0 else False,
+        prefetch_factor=2 if num_workers > 0 else 2,
     )
     test_loader = DataLoader(
         test_set,
@@ -279,6 +258,8 @@ def get_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
+        persistent_workers=True if num_workers > 0 else False,
+        prefetch_factor=2 if num_workers > 0 else 2,
     )
     return train_loader, test_loader
 
@@ -317,8 +298,8 @@ def train_one_epoch(
 
     for batch_idx, (images, targets) in enumerate(data_iter):
         # print(batch_idx)
-        images = images.to(device)
-        targets = targets.to(device)
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
 
         optimizer.zero_grad()
         # print("forwarding")
@@ -374,8 +355,8 @@ def evaluate(
 
     with torch.no_grad():
         for images, targets in data_iter:
-            images = images.to(device)
-            targets = targets.to(device)
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
             outputs = model(images)
             loss = criterion(outputs, targets)
             running_loss += loss.item() * images.size(0)
@@ -771,8 +752,8 @@ def test_saved_model(
 
     with torch.no_grad():
         for images, targets in tqdm(test_loader, desc="测试中", ncols=100):
-            images = images.to(device)
-            targets = targets.to(device)
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
 
             outputs = model(images)
             loss = criterion(outputs, targets)
