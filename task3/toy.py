@@ -91,6 +91,176 @@ def create_events_np_files_fixed(extract_root: str, events_np_root: str):
 # 临时替换 CIFAR10DVS 的 create_events_np_files 方法
 CIFAR10DVS.create_events_np_files = staticmethod(create_events_np_files_fixed)
 
+
+class CIFAR10DVSOrganizedDataset:
+    """
+    高效包装CIFAR10-DVS数据集，利用数据集已按类别顺序组织的特点
+    每个类别有固定数量的样本（默认1000个），按顺序排列
+
+    数据集组织方式：
+    - 类别 0: 索引 0 到 samples_per_class-1
+    - 类别 1: 索引 samples_per_class 到 2*samples_per_class-1
+    - ...
+    - 类别 n: 索引 n*samples_per_class 到 (n+1)*samples_per_class-1
+    """
+
+    def __init__(self, dataset, samples_per_class=1000, num_classes=10):
+        """
+        初始化包装类
+
+        Args:
+            dataset: CIFAR10DVS数据集对象
+            samples_per_class: 每个类别的样本数（默认1000）
+            num_classes: 类别总数（默认10）
+        """
+        self.dataset = dataset
+        self.samples_per_class = samples_per_class
+        self.num_classes = num_classes
+        self.total_samples = len(dataset)
+
+        # 验证数据集大小
+        expected_size = samples_per_class * num_classes
+        if self.total_samples != expected_size:
+            print(
+                f"[警告] 数据集大小 {self.total_samples} 与预期 {expected_size} 不匹配"
+            )
+
+    def __len__(self):
+        """返回数据集总大小"""
+        return self.total_samples
+
+    def __getitem__(self, idx):
+        """获取单个样本"""
+        return self.dataset[idx]
+
+    def get_class_indices(self, class_label):
+        """
+        获取指定类别的所有样本索引（高效方法，直接计算）
+
+        Args:
+            class_label: 类别标签 (0-9)
+
+        Returns:
+            range对象，包含该类别的所有索引
+        """
+        start_idx = class_label * self.samples_per_class
+        end_idx = start_idx + self.samples_per_class
+        return range(start_idx, end_idx)
+
+    def split_stratified(self, train_ratio=0.8, shuffle=False, seed=None):
+        """
+        高效的分层切分方法，直接使用索引切片，无需遍历数据集
+
+        Args:
+            train_ratio: 训练集比例（默认0.8）
+            shuffle: 是否在每个类别内打乱顺序（默认False）
+            seed: 随机种子（仅在shuffle=True时有效）
+
+        Returns:
+            train_indices: 训练集索引列表
+            test_indices: 测试集索引列表
+        """
+        train_indices = []
+        test_indices = []
+
+        if shuffle and seed is not None:
+            import random
+
+            random.seed(seed)
+
+        for class_label in range(self.num_classes):
+            # 直接计算该类别的索引范围
+            start_idx = class_label * self.samples_per_class
+            end_idx = start_idx + self.samples_per_class
+
+            # 创建该类别的索引列表
+            class_indices = list(range(start_idx, end_idx))
+
+            if shuffle:
+                import random
+
+                random.shuffle(class_indices)
+
+            # 计算切分点
+            train_size = int(len(class_indices) * train_ratio)
+
+            # 分割索引
+            train_indices.extend(class_indices[:train_size])
+            test_indices.extend(class_indices[train_size:])
+
+        return train_indices, test_indices
+
+    def get_train_test_subsets(self, train_ratio=0.8, shuffle=False, seed=None):
+        """
+        返回训练集和测试集的Subset对象（可直接用于DataLoader）
+
+        Args:
+            train_ratio: 训练集比例（默认0.8）
+            shuffle: 是否在每个类别内打乱顺序（默认False）
+            seed: 随机种子（仅在shuffle=True时有效）
+
+        Returns:
+            train_subset: 训练集Subset对象
+            test_subset: 测试集Subset对象
+        """
+        from torch.utils.data import Subset
+
+        train_indices, test_indices = self.split_stratified(
+            train_ratio=train_ratio, shuffle=shuffle, seed=seed
+        )
+
+        train_subset = Subset(self.dataset, train_indices)
+        test_subset = Subset(self.dataset, test_indices)
+
+        return train_subset, test_subset
+
+    def get_class_subset(self, class_label):
+        """
+        获取指定类别的子集
+
+        Args:
+            class_label: 类别标签 (0-9)
+
+        Returns:
+            Subset对象，包含该类别的所有样本
+        """
+        from torch.utils.data import Subset
+
+        indices = list(self.get_class_indices(class_label))
+        return Subset(self.dataset, indices)
+
+    def verify_organization(self):
+        """
+        验证数据集是否按照预期方式组织
+        返回验证结果和详细信息
+        """
+        is_organized = True
+        issues = []
+
+        for class_label in range(self.num_classes):
+            start_idx = class_label * self.samples_per_class
+            end_idx = start_idx + self.samples_per_class
+
+            # 检查前几个和后几个样本的标签
+            if start_idx < self.total_samples:
+                _, first_label = self.dataset[start_idx]
+                if first_label != class_label:
+                    is_organized = False
+                    issues.append(
+                        f"类别 {class_label} 起始位置 {start_idx} 的标签是 {first_label}，不是 {class_label}"
+                    )
+
+            if end_idx - 1 < self.total_samples:
+                _, last_label = self.dataset[end_idx - 1]
+                if last_label != class_label:
+                    is_organized = False
+                    issues.append(
+                        f"类别 {class_label} 结束位置 {end_idx-1} 的标签是 {last_label}，不是 {class_label}"
+                    )
+
+        return is_organized, issues
+
+
 root = os.path.join(os.path.dirname(__file__), "..", "data")
 
 print("=" * 70)
@@ -102,157 +272,105 @@ frames_number = 10
 split_by = "number"
 dataset = None
 
-try:
-    dataset = CIFAR10DVS(
-        root=root,
-        data_type="frame",
-        frames_number=frames_number,
-        split_by=split_by,
-    )
-    print(f"[OK] 数据集加载成功！")
-    print(f"  总样本数: {len(dataset)}")
+dataset = CIFAR10DVS(
+    root=root,
+    data_type="frame",
+    frames_number=frames_number,
+    split_by=split_by,
+)
 
-    # 检查样本形状和标签
-    if len(dataset) > 0:
-        sample_frame, sample_label = dataset[0]
-        print(
-            f"  样本形状: {sample_frame.shape if hasattr(sample_frame, 'shape') else type(sample_frame)}"
-        )
-        print(f"  标签类型: {type(sample_label)}, 值: {sample_label}")
-
-        if isinstance(sample_frame, np.ndarray):
-            print(f"  数据格式: numpy.ndarray")
-            print(f"  数据类型: {sample_frame.dtype}")
-        elif isinstance(sample_frame, torch.Tensor):
-            print(f"  数据格式: torch.Tensor")
-            print(f"  数据类型: {sample_frame.dtype}")
-
-        # 显示帧数据的统计信息
-        if hasattr(sample_frame, "shape") and len(sample_frame.shape) >= 2:
-            if isinstance(sample_frame, np.ndarray):
-                print(f"\n  帧数据统计:")
-                print(f"    最小值: {sample_frame.min():.4f}")
-                print(f"    最大值: {sample_frame.max():.4f}")
-                print(f"    均值: {sample_frame.mean():.4f}")
-                print(f"    标准差: {sample_frame.std():.4f}")
-
-    # 统计类别分布 - 检查所有样本
-    from collections import Counter
-
-    labels = []
-    print(f"\n  正在统计类别分布（所有样本）...")
-    print(f"  进度: ", end="", flush=True)
-    for i in range(len(dataset)):
-        if i % 1000 == 0:
-            print(f"{i}/{len(dataset)} ", end="", flush=True)
-        _, label = dataset[i]
-        labels.append(label)
-    print(f"\n  完成！共检查 {len(labels)} 个样本")
-
-    label_counts = Counter(labels)
-    print(f"\n  类别分布（所有样本）:")
-    print(f"    总类别数: {len(label_counts)}")
-    for label in sorted(label_counts.keys()):
-        print(
-            f"    类别 {label}: {label_counts[label]} 样本 ({label_counts[label]/len(dataset)*100:.1f}%)"
-        )
-
-    # 打印一些样本的详细信息
-    print(f"\n  样本详细信息（前10个样本）:")
-    for i in range(min(10, len(dataset))):
-        frame, label = dataset[i]
-        print(
-            f"    索引 {i}: 标签={label}, 形状={frame.shape if hasattr(frame, 'shape') else 'N/A'}"
-        )
-
-except Exception as e:
-    print(f"[ERROR] 加载失败: {e}")
-    import traceback
-
-    traceback.print_exc()
-
-# 测试分层切分功能
-print("\n【测试2】测试分层切分功能")
+# 测试高效包装类
+print("\n【测试3】测试高效数据集包装类")
 print("-" * 70)
 
 try:
-    from collections import defaultdict
-    import random
-    from torch.utils.data import Subset
-
     if dataset is None or len(dataset) == 0:
-        print("[ERROR] 数据集未加载或为空，跳过分层切分测试")
+        print("[ERROR] 数据集未加载或为空，跳过包装类测试")
     else:
-        # 使用number切分的数据集进行分层切分测试
-        full_dataset = dataset
-        total_samples = len(full_dataset)
+        # 创建包装类
+        print("  创建 CIFAR10DVSOrganizedDataset 包装类...")
+        wrapped_dataset = CIFAR10DVSOrganizedDataset(
+            dataset, samples_per_class=1000, num_classes=10
+        )
+        print(f"  ✓ 包装类创建成功！总样本数: {len(wrapped_dataset)}")
 
-        # 按类别分组 - 检查所有样本
-        class_indices = defaultdict(list)
-        print(f"  正在收集类别信息（总样本数: {total_samples}）...")
-        print(f"  进度: ", end="", flush=True)
-        for idx in range(total_samples):
-            if idx % 1000 == 0:
-                print(f"{idx}/{total_samples} ", end="", flush=True)
-            _, label = full_dataset[idx]
-            class_indices[label].append(idx)
-        print(f"\n  完成！")
+        # 验证数据集组织
+        print("\n  验证数据集组织方式...")
+        is_organized, issues = wrapped_dataset.verify_organization()
+        if is_organized:
+            print("  ✓ 数据集组织验证通过！")
+        else:
+            print("  ✗ 数据集组织验证失败:")
+            for issue in issues:
+                print(f"    - {issue}")
 
-        print(f"  找到的类别数: {len(class_indices)}")
-        print(f"  各类别样本数:")
-        for class_label in sorted(class_indices.keys()):
+        # 测试获取类别索引
+        print("\n  测试获取类别索引（高效方法）:")
+        for class_label in range(min(3, wrapped_dataset.num_classes)):
+            indices = wrapped_dataset.get_class_indices(class_label)
             print(
-                f"    类别 {class_label}: {len(class_indices[class_label])} 样本 ({len(class_indices[class_label])/total_samples*100:.1f}%)"
+                f"    类别 {class_label}: 索引范围 {indices.start}-{indices.stop-1} (共 {len(indices)} 个样本)"
             )
 
-        # 模拟分层切分
-        train_ratio = 0.8
-        train_indices = []
-        test_indices = []
+        # 测试高效分层切分（不打乱）
+        print("\n  测试高效分层切分（不打乱，直接索引切片）:")
+        import time
 
-        random.seed(42)
-        for class_label, indices in sorted(class_indices.items()):
-            random.shuffle(indices)
-            class_train_size = int(len(indices) * train_ratio)
-            train_indices.extend(indices[:class_train_size])
-            test_indices.extend(indices[class_train_size:])
-            print(
-                f"    类别 {class_label}: {len(indices[:class_train_size])} 训练, {len(indices[class_train_size:])} 测试"
-            )
-
-        print(f"\n  分层切分结果（所有 {total_samples} 个样本）:")
+        start_time = time.time()
+        train_indices, test_indices = wrapped_dataset.split_stratified(
+            train_ratio=0.8, shuffle=False
+        )
+        elapsed_time = time.time() - start_time
+        print(f"  ✓ 切分完成！用时: {elapsed_time*1000:.2f} ms")
         print(
-            f"    训练集: {len(train_indices)} 样本 ({len(train_indices)/total_samples*100:.1f}%)"
+            f"    训练集: {len(train_indices)} 样本 ({len(train_indices)/len(dataset)*100:.1f}%)"
         )
         print(
-            f"    测试集: {len(test_indices)} 样本 ({len(test_indices)/total_samples*100:.1f}%)"
+            f"    测试集: {len(test_indices)} 样本 ({len(test_indices)/len(dataset)*100:.1f}%)"
         )
 
-        # 验证分层切分后的类别分布
-        train_class_count = defaultdict(int)
-        test_class_count = defaultdict(int)
-        for idx in train_indices:
-            _, label = full_dataset[idx]
-            train_class_count[label] += 1
-        for idx in test_indices:
-            _, label = full_dataset[idx]
-            test_class_count[label] += 1
+        # 验证切分后的类别分布
+        from collections import Counter
 
-        print(f"\n  分层切分后的类别分布:")
-        print(f"    {'类别':<8} {'训练集':<12} {'测试集':<12} {'总计':<8}")
-        print(f"    {'-'*45}")
-        for class_label in sorted(
-            set(train_class_count.keys()) | set(test_class_count.keys())
-        ):
-            train_count = train_class_count.get(class_label, 0)
-            test_count = test_class_count.get(class_label, 0)
-            total_count = train_count + test_count
-            print(
-                f"    {class_label:<8} {train_count:<12} {test_count:<12} {total_count:<8}"
-            )
+        train_labels = [
+            dataset[idx][1] for idx in train_indices[:1000]
+        ]  # 只检查前1000个以节省时间
+        test_labels = [
+            dataset[idx][1] for idx in test_indices[:200]
+        ]  # 只检查前200个以节省时间
+        print(f"\n  验证切分后的类别分布（采样检查）:")
+        print(f"    训练集前1000个样本的类别分布: {dict(Counter(train_labels))}")
+        print(f"    测试集前200个样本的类别分布: {dict(Counter(test_labels))}")
+
+        # 测试高效分层切分（打乱）
+        print("\n  测试高效分层切分（打乱，seed=42）:")
+        start_time = time.time()
+        train_indices_shuffled, test_indices_shuffled = (
+            wrapped_dataset.split_stratified(train_ratio=0.8, shuffle=True, seed=42)
+        )
+        elapsed_time = time.time() - start_time
+        print(f"  ✓ 切分完成！用时: {elapsed_time*1000:.2f} ms")
+        print(f"    训练集: {len(train_indices_shuffled)} 样本")
+        print(f"    测试集: {len(test_indices_shuffled)} 样本")
+
+        # 测试获取Subset对象
+        print("\n  测试获取Subset对象（可直接用于DataLoader）:")
+        train_subset, test_subset = wrapped_dataset.get_train_test_subsets(
+            train_ratio=0.8, shuffle=False
+        )
+        print(f"  ✓ Subset对象创建成功！")
+        print(f"    训练集Subset大小: {len(train_subset)}")
+        print(f"    测试集Subset大小: {len(test_subset)}")
+
+        # 测试获取单个类别的子集
+        print("\n  测试获取单个类别的子集:")
+        class_0_subset = wrapped_dataset.get_class_subset(0)
+        print(f"    类别 0 的子集大小: {len(class_0_subset)}")
+        sample_frame, sample_label = class_0_subset[0]
+        print(f"    第一个样本的标签: {sample_label} (应该是 0)")
 
 except Exception as e:
-    print(f"[ERROR] 分层切分测试失败: {e}")
+    print(f"[ERROR] 包装类测试失败: {e}")
     import traceback
 
     traceback.print_exc()

@@ -17,6 +17,9 @@ import wandb
 from spikingjelly.activation_based import neuron, functional, surrogate, layer
 from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
 
+# 导入高效数据集包装类
+from dataset_wrapper import CIFAR10DVSOrganizedDataset
+
 # Import SuperSpike surrogate function
 import sys
 
@@ -142,10 +145,8 @@ def get_dataloaders(
     # The dataset will automatically convert events to frames
     # According to SpikingJelly docs: https://spikingjelly.readthedocs.io/zh-cn/latest/APIs/spikingjelly.datasets.html
     # Note: CIFAR10DVS doesn't have 'train' parameter, we need to load and split manually
-    from torch.utils.data import Subset
 
-    # Load full dataset (CIFAR10DVS typically has 9000 train + 1000 test = 10000 total)
-    # But the actual split may vary, so we load all and split manually
+    # Load full dataset (CIFAR10DVS typically has 10000 total samples, 1000 per class)
     full_dataset = CIFAR10DVS(
         root=root,
         data_type="frame",
@@ -153,19 +154,15 @@ def get_dataloaders(
         split_by=split_by,
     )
 
-    # Stratified split: split by class to ensure balanced distribution
-    # First, collect all labels to group samples by class
-    print("正在按类别收集样本信息...")
-    from collections import defaultdict
-    import random
+    # 使用高效包装类进行分层切分
+    print("使用高效数据集包装类进行分层切分...")
 
-    # Group indices by class label
-    class_indices = defaultdict(list)
-    for idx in range(len(full_dataset)):
-        _, label = full_dataset[idx]
-        class_indices[label].append(idx)
+    # 创建包装类（假设每个类别1000个样本，共10个类别）
+    wrapped_dataset = CIFAR10DVSOrganizedDataset(
+        dataset=full_dataset, samples_per_class=1000, num_classes=10
+    )
 
-    # Determine split ratio
+    # 确定切分比例
     total_samples = len(full_dataset)
     if total_samples == 10000:
         # Standard split: 9000 train, 1000 test (90/10)
@@ -177,41 +174,23 @@ def get_dataloaders(
         # Use 90/10 split as default
         train_ratio = 0.9
 
-    # Split each class according to the ratio
-    train_indices = []
-    test_indices = []
-
-    # Set random seed for reproducibility
-    random.seed(42)
-
-    for class_label, indices in sorted(class_indices.items()):
-        # Shuffle indices for this class
-        random.shuffle(indices)
-
-        # Calculate split point for this class
-        class_train_size = int(len(indices) * train_ratio)
-
-        # Split indices
-        class_train_indices = indices[:class_train_size]
-        class_test_indices = indices[class_train_size:]
-
-        train_indices.extend(class_train_indices)
-        test_indices.extend(class_test_indices)
-
-        print(
-            f"  类别 {class_label}: {len(class_train_indices)} 训练, {len(class_test_indices)} 测试"
-        )
-
-    # Shuffle the final indices to mix classes
-    random.shuffle(train_indices)
-    random.shuffle(test_indices)
-
-    print(
-        f"✓ 分层切分完成: {len(train_indices)} 训练样本, {len(test_indices)} 测试样本"
+    # 使用高效方法进行分层切分（在每个类别内打乱，seed=42保证可复现）
+    train_set, test_set = wrapped_dataset.get_train_test_subsets(
+        train_ratio=train_ratio, shuffle=True, seed=42  # 在每个类别内打乱
     )
 
-    train_set = Subset(full_dataset, train_indices)
-    test_set = Subset(full_dataset, test_indices)
+    # 打印切分信息
+    print(f"✓ 高效分层切分完成: {len(train_set)} 训练样本, {len(test_set)} 测试样本")
+
+    # 显示各类别的切分情况（可选，用于验证）
+    if total_samples == 10000:  # 只在标准情况下显示详细信息
+        print("  各类别切分情况:")
+        for class_label in range(10):
+            class_indices = list(wrapped_dataset.get_class_indices(class_label))
+            train_size = int(len(class_indices) * train_ratio)
+            print(
+                f"    类别 {class_label}: {train_size} 训练, {len(class_indices) - train_size} 测试"
+            )
 
     # Print dataset information
     print("\n" + "=" * 70)
@@ -248,7 +227,7 @@ def get_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,  # 禁用pin_memory以支持NPU
         persistent_workers=True if num_workers > 0 else False,
         prefetch_factor=2 if num_workers > 0 else 2,
     )
@@ -257,7 +236,7 @@ def get_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,  # 禁用pin_memory以支持NPU
         persistent_workers=True if num_workers > 0 else False,
         prefetch_factor=2 if num_workers > 0 else 2,
     )
@@ -298,8 +277,8 @@ def train_one_epoch(
 
     for batch_idx, (images, targets) in enumerate(data_iter):
         # print(batch_idx)
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        images = images.to(device)  # 移除non_blocking以支持NPU
+        targets = targets.to(device)  # 移除non_blocking以支持NPU
 
         optimizer.zero_grad()
         # print("forwarding")
@@ -355,8 +334,8 @@ def evaluate(
 
     with torch.no_grad():
         for images, targets in data_iter:
-            images = images.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
+            images = images.to(device)  # 移除non_blocking以支持NPU
+            targets = targets.to(device)  # 移除non_blocking以支持NPU
             outputs = model(images)
             loss = criterion(outputs, targets)
             running_loss += loss.item() * images.size(0)
@@ -429,7 +408,7 @@ def main():
     )
     parser.set_defaults(progress=True)
     parser.add_argument(
-        "--device", type=str, default="auto", help="'cuda', 'cpu', or 'auto'"
+        "--device", type=str, default="auto", help="'cuda', 'npu', 'cpu', or 'auto'"
     )
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--save-dir", type=str, default=os.path.join("runs"))
@@ -452,7 +431,13 @@ def main():
     args = parser.parse_args()
 
     if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 优先检查NPU，然后CUDA，最后CPU
+        if hasattr(torch, "npu") and torch.npu.is_available():
+            device = torch.device("npu")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
     else:
         device = torch.device(args.device)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -507,7 +492,10 @@ def main():
     print(f"总参数量: {total_params:,} ({total_params/1e6:.2f}M)")
     print(f"可训练参数: {trainable_params:,}")
     print(f"设备: {device}")
-    if torch.cuda.is_available() and device.type == "cuda":
+    # 设备信息打印（支持NPU和CUDA）
+    if device.type == "npu" and hasattr(torch, "npu"):
+        print(f"NPU设备已启用")
+    elif device.type == "cuda" and torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(
             f"GPU显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB"
@@ -520,8 +508,19 @@ def main():
     scheduler = StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
     # Log model architecture to wandb
+    # 注意：wandb.watch在NPU上可能会尝试使用CUDA功能导致错误
+    # 在NPU上完全禁用wandb.watch以避免CUDA依赖
     if args.use_wandb:
-        wandb.watch(model, log="all", log_freq=100)
+        if device.type == "npu":
+            print("[信息] 检测到NPU设备，禁用wandb模型监控以避免CUDA依赖")
+            print("  这不会影响训练，只是无法在wandb中查看模型参数和梯度统计")
+        else:
+            try:
+                # 在CUDA/CPU上可以安全使用wandb.watch
+                wandb.watch(model, log="parameters", log_freq=100)
+            except Exception as e:
+                print(f"[警告] wandb.watch失败，跳过模型监控: {e}")
+                print("  这不会影响训练，只是无法在wandb中查看模型参数统计")
 
     # Print training configuration
     print("=" * 70)
@@ -659,7 +658,13 @@ def test_saved_model(
 
     # 设置设备
     if device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 优先检查NPU，然后CUDA，最后CPU
+        if hasattr(torch, "npu") and torch.npu.is_available():
+            device = torch.device("npu")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
     else:
         device = torch.device(device)
     print(f"设备: {device}")
@@ -752,8 +757,8 @@ def test_saved_model(
 
     with torch.no_grad():
         for images, targets in tqdm(test_loader, desc="测试中", ncols=100):
-            images = images.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
+            images = images.to(device)  # 移除non_blocking以支持NPU
+            targets = targets.to(device)  # 移除non_blocking以支持NPU
 
             outputs = model(images)
             loss = criterion(outputs, targets)
