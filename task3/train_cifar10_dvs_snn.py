@@ -428,6 +428,12 @@ def main():
         help="Disable W&B logging",
     )
     parser.set_defaults(use_wandb=True)
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint file to resume training from",
+    )
     args = parser.parse_args()
 
     if args.device == "auto":
@@ -507,6 +513,66 @@ def main():
     )
     scheduler = StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
+    # 如果提供了resume参数，加载检查点继续训练
+    start_epoch = 1
+    best_acc = 0.0
+    if args.resume:
+        if not os.path.exists(args.resume):
+            print(f"错误: 检查点文件不存在: {args.resume}")
+            return
+
+        print(f"从检查点恢复训练: {args.resume}")
+        try:
+            ckpt = torch.load(args.resume, map_location=device)
+
+            # 加载模型权重
+            model.load_state_dict(ckpt["model_state"])
+            print("✓ 模型权重加载成功")
+
+            # 加载优化器状态（如果存在）
+            if "optimizer_state" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer_state"])
+                print("✓ 优化器状态加载成功")
+
+            # 加载调度器状态（如果存在）
+            if "scheduler_state" in ckpt:
+                scheduler.load_state_dict(ckpt["scheduler_state"])
+                print("✓ 调度器状态加载成功")
+
+            # 恢复训练轮数和最佳准确率
+            if "epoch" in ckpt:
+                start_epoch = ckpt["epoch"] + 1
+                print(
+                    f"✓ 从第 {start_epoch} 轮继续训练（检查点保存于第 {ckpt['epoch']} 轮）"
+                )
+
+            if "test_acc" in ckpt:
+                best_acc = ckpt["test_acc"]
+                print(f"✓ 恢复最佳准确率: {best_acc:.4f}")
+
+            # 显示检查点信息
+            print("\n检查点信息:")
+            print(f"  - Epoch: {ckpt.get('epoch', 'N/A')}")
+            print(
+                f"  - Test Accuracy: {ckpt.get('test_acc', 'N/A'):.4f}"
+                if "test_acc" in ckpt
+                else "  - Test Accuracy: N/A"
+            )
+            print(
+                f"  - Train Accuracy: {ckpt.get('train_acc', 'N/A'):.4f}"
+                if "train_acc" in ckpt
+                else "  - Train Accuracy: N/A"
+            )
+            print(f"  - Learning Rate: {ckpt.get('learning_rate', 'N/A')}")
+            print()
+
+        except Exception as e:
+            print(f"错误: 无法加载检查点: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return
+
     # Log model architecture to wandb
     # 注意：wandb.watch在NPU上可能会尝试使用CUDA功能导致错误
     # 在NPU上完全禁用wandb.watch以避免CUDA依赖
@@ -537,8 +603,7 @@ def main():
 
     print("开始训练...\n")
 
-    best_acc = 0.0
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         start = time.time()
         train_loss, train_acc = train_one_epoch(
             model,

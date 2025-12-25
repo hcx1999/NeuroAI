@@ -15,6 +15,7 @@ from tqdm import tqdm
 # SpikingJelly
 from spikingjelly.activation_based import neuron, functional, surrogate, layer
 
+
 # ---------------------
 # Model: Conv SNN
 # ---------------------
@@ -79,27 +80,50 @@ class ConvSNN(nn.Module):
 # Data
 # ---------------------
 
-def get_dataloaders(batch_size: int = 128, num_workers: int = 2) -> Tuple[DataLoader, DataLoader]:
+
+def get_dataloaders(
+    batch_size: int = 128, num_workers: int = 2
+) -> Tuple[DataLoader, DataLoader]:
     mean = (0.4914, 0.4822, 0.4465)
     std = (0.2023, 0.1994, 0.2010)
 
-    train_tf = T.Compose([
-        T.RandomCrop(32, padding=4),
-        T.RandomHorizontalFlip(),
-        T.ToTensor(),
-        T.Normalize(mean, std),
-    ])
-    test_tf = T.Compose([
-        T.ToTensor(),
-        T.Normalize(mean, std),
-    ])
+    train_tf = T.Compose(
+        [
+            T.RandomCrop(32, padding=4),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Normalize(mean, std),
+        ]
+    )
+    test_tf = T.Compose(
+        [
+            T.ToTensor(),
+            T.Normalize(mean, std),
+        ]
+    )
 
-    root = os.path.join(os.path.dirname(__file__), '..', 'data')
-    train_set = torchvision.datasets.CIFAR10(root=root, train=True, transform=train_tf, download=True)
-    test_set = torchvision.datasets.CIFAR10(root=root, train=False, transform=test_tf, download=True)
+    root = os.path.join(os.path.dirname(__file__), "..", "data")
+    train_set = torchvision.datasets.CIFAR10(
+        root=root, train=True, transform=train_tf, download=True
+    )
+    test_set = torchvision.datasets.CIFAR10(
+        root=root, train=False, transform=test_tf, download=True
+    )
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    train_loader = DataLoader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    test_loader = DataLoader(
+        test_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
     return train_loader, test_loader
 
 
@@ -107,12 +131,17 @@ def get_dataloaders(batch_size: int = 128, num_workers: int = 2) -> Tuple[DataLo
 # Train & Eval
 # ---------------------
 
-def train_one_epoch(model, loader, criterion, optimizer, device, grad_clip: float, progress: bool):
+
+def train_one_epoch(
+    model, loader, criterion, optimizer, device, grad_clip: float, progress: bool
+):
     model.train()
     running_loss = 0.0
     total = 0
     correct = 0
-    data_iter = tqdm(loader, desc='Train', leave=False, ncols=80) if progress else loader
+    data_iter = (
+        tqdm(loader, desc="Train", leave=False, ncols=80) if progress else loader
+    )
     for images, targets in data_iter:
         images = images.to(device)
         targets = targets.to(device)
@@ -137,7 +166,7 @@ def evaluate(model, loader, criterion, device, progress: bool):
     running_loss = 0.0
     total = 0
     correct = 0
-    data_iter = tqdm(loader, desc='Eval', leave=False, ncols=80) if progress else loader
+    data_iter = tqdm(loader, desc="Eval", leave=False, ncols=80) if progress else loader
     with torch.no_grad():
         for images, targets in data_iter:
             images = images.to(device)
@@ -155,45 +184,80 @@ def evaluate(model, loader, criterion, device, progress: bool):
 # Main
 # ---------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(description='CIFAR-10 Conv SNN with activation-driven BP (CPU)')
-    parser.add_argument('--epochs', type=int, default=40)
-    parser.add_argument('--batch-size', type=int, default=128)
-    parser.add_argument('--timesteps', type=int, default=4)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--weight-decay', type=float, default=5e-4)
-    parser.add_argument('--label-smoothing', type=float, default=0.05)
-    parser.add_argument('--step-size', type=int, default=20, help='StepLR step size (epochs)')
-    parser.add_argument('--gamma', type=float, default=0.5, help='StepLR decay factor')
-    parser.add_argument('--grad-clip', type=float, default=1.0, help='Clip grad norm; <=0 to disable')
-    parser.add_argument('--no-progress', dest='progress', action='store_false', help='Disable tqdm progress bar')
-    parser.add_argument('--progress', dest='progress', action='store_true', help='Enable tqdm progress bar (default)')
+    parser = argparse.ArgumentParser(
+        description="CIFAR-10 Conv SNN with activation-driven BP (CPU)"
+    )
+    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--timesteps", type=int, default=4)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--label-smoothing", type=float, default=0.05)
+    parser.add_argument(
+        "--step-size", type=int, default=20, help="StepLR step size (epochs)"
+    )
+    parser.add_argument("--gamma", type=float, default=0.5, help="StepLR decay factor")
+    parser.add_argument(
+        "--grad-clip", type=float, default=1.0, help="Clip grad norm; <=0 to disable"
+    )
+    parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_false",
+        help="Disable tqdm progress bar",
+    )
+    parser.add_argument(
+        "--progress",
+        dest="progress",
+        action="store_true",
+        help="Enable tqdm progress bar (default)",
+    )
     parser.set_defaults(progress=True)
-    parser.add_argument('--device', type=str, default='auto', help="'cuda', 'cpu', or 'auto'")
-    parser.add_argument('--num-workers', type=int, default=2)
-    parser.add_argument('--save-dir', type=str, default=os.path.join('runs'))
+    parser.add_argument(
+        "--device", type=str, default="auto", help="'cuda', 'cpu', or 'auto'"
+    )
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--save-dir", type=str, default=os.path.join("runs"))
     args = parser.parse_args()
 
-    if args.device == 'auto':
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
     os.makedirs(args.save_dir, exist_ok=True)
 
-    train_loader, test_loader = get_dataloaders(batch_size=args.batch_size, num_workers=args.num_workers)
+    train_loader, test_loader = get_dataloaders(
+        batch_size=args.batch_size, num_workers=args.num_workers
+    )
 
     model = ConvSNN(num_classes=10, T_steps=args.timesteps).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(
+        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+    )
     scheduler = StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
     best_acc = 0.0
     for epoch in range(1, args.epochs + 1):
         start = time.time()
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, args.grad_clip, args.progress)
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device, args.progress)
+        train_loss, train_acc = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            args.grad_clip,
+            args.progress,
+        )
+        test_loss, test_acc = evaluate(
+            model, test_loader, criterion, device, args.progress
+        )
         dt = time.time() - start
-        print(f'Epoch {epoch}/{args.epochs} | Train loss {train_loss:.4f} acc {train_acc:.4f} | Test loss {test_loss:.4f} acc {test_acc:.4f} | lr {scheduler.get_last_lr()[0]:.5f} | {dt:.1f}s')
+        print(
+            f"Epoch {epoch}/{args.epochs} | Train loss {train_loss:.4f} acc {train_acc:.4f} | Test loss {test_loss:.4f} acc {test_acc:.4f} | lr {scheduler.get_last_lr()[0]:.5f} | {dt:.1f}s"
+        )
 
         scheduler.step()
 
@@ -201,15 +265,18 @@ def main():
         if test_acc > best_acc:
             best_acc = test_acc
             ckpt = {
-                'model_state': model.state_dict(),
-                'epoch': epoch,
-                'test_acc': test_acc,
-                'timesteps': args.timesteps,
+                "model_state": model.state_dict(),
+                "epoch": epoch,
+                "test_acc": test_acc,
+                "timesteps": args.timesteps,
             }
-            torch.save(ckpt, os.path.join(args.save_dir, f'best_snn_timesteps{args.timesteps}.pt'))
+            torch.save(
+                ckpt,
+                os.path.join(args.save_dir, f"best_snn_timesteps{args.timesteps}.pt"),
+            )
 
-    print(f'Best test acc: {best_acc:.4f}')
+    print(f"Best test acc: {best_acc:.4f}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
