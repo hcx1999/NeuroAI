@@ -1,0 +1,9 @@
+__pycache__/
+sequential_cifar10/
+sequential_mnist/
+logs/
+results/
+temp.py
+run_experiment.sh
+kill.sh
+.DS_Store
